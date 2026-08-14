@@ -157,7 +157,132 @@ function parseDocument(rawText, title, source){
   flush();
   // assign stable ids
   questions.forEach((q,i)=> q.id = uid());
+  if(questions.length===0){
+    // fallback: try the real-GRE OCR format ("Section X | Question Y")
+    const real = parseRealGRE(rawText, title, source);
+    if(real.questions.length) return real;
+  }
   return { title:title||"未命名试卷", source, questions };
+}
+
+/* ============================================================
+   PARSER (2) — real GRE test exports (OCR'd Markdown/PDF text)
+   Format: "Section X of Y | Question N of M", then a stem, options
+   (one per line for TC/SE, rows of columns for multi-blank), and a
+   "Select ..." directive line. Answers (if present) live in a scrambled
+   trailing key we try to match best-effort.
+   ============================================================ */
+function parseRealGRE(rawText, title, source){
+  const lines = rawText.split(/\r?\n/);
+  const qHead = /^Section\s+(\d+)\s+of\s+\d+\s*\|\s*Question\s+(\d+)\s+of\s+(\d+)/i;
+  const blocks=[]; let cur=null;
+  for(const raw of lines){
+    const t=raw.replace(/^#+\s*/,"").trim();
+    const m=qHead.exec(t);
+    if(m){ if(cur) blocks.push(cur); cur={sec:+m[1],num:+m[2],total:+m[3],lines:[]}; continue; }
+    if(cur) cur.lines.push(t);
+  }
+  if(cur) blocks.push(cur);
+  if(!blocks.length) return { title:title||"未命名试卷", source, questions:[] };
+
+  const DIRECTIVES=[
+    {re:/Enter your answer|type your answer|numeric entry/i, type:"numeric", blanks:0},
+    {re:/Select one entry for the blank/i, type:"tc1", blanks:1},
+    {re:/Select one entry from each column/i, type:"tcm", blanks:null},
+    {re:/Select the two answer choices|Select two answer choices/i, type:"se", blanks:1, multi:true},
+    {re:/Select one answer choice/i, type:"single", blanks:1},
+    {re:/individually provide\(s\) sufficient|which of the following statements|select all that apply|one or more answer choices|most logically completes/i, type:"multi", blanks:1, multi:true},
+  ];
+  const STOPWORDS=new Set(["are","is","the","of","for","to","and","a","an","in","on","at","by","be","that","this","with","as","was","were","it","its","from","or","but","not","no","which","who","they","their","he","she","we","you","i","has","have","had","will","would","can","could","may","should"]);
+  const STEM_STOP=/^(Section|Question|For each|Direction|Select|Blank|Indicate|Enter|If you|Please|The directions|Questions?\s+\d|Which of the following|Based on|However|Although|End of|Select Return|Select Continue|End of Section)/i;
+  function isGarbage(s){ const L=(s.match(/[A-Za-z]/g)||[]); if(L.length<3) return false; const j=(s.match(/[Oo0dD]/g)||[]).length; return j/L.length>0.7; }
+  function isCandidate(s){ if(!s||!s.trim()) return false; const t=s.trim();
+    if(DIRECTIVES.some(d=>d.re.test(t))) return false;
+    if(STEM_STOP.test(t)) return false;
+    if(t.length>42) return false;
+    if(!/^[A-Za-z0-9][A-Za-z0-9'’\- ]*$/.test(t)) return false;
+    return true; }
+  function classify(b){ for(const d of DIRECTIVES) if(b.lines.some(l=>d.re.test(l))) return {...d}; return {type:"single",blanks:1}; }
+  function stripDir(arr){ return arr.filter(l=>!DIRECTIVES.some(d=>d.re.test(l))); }
+  function extract(b,d){
+    const L=b.lines; let dirIdx=L.length;
+    for(let i=L.length-1;i>=0;i--) if(DIRECTIVES.some(dd=>dd.re.test(L[i]))){ dirIdx=i; break; }
+    // collect the raw region between the last stem line and the directive
+    let raw=[], i=dirIdx-1;
+    while(i>=0){
+      const ln=L[i];
+      if(!ln||!ln.trim()){ i--; continue; }
+      const t=ln.trim();
+      if(STEM_STOP.test(t)) break;
+      if(t.length>60) break;                       // strong stem sentence
+      if(/[.?!:]$/.test(t) && t.length>30) break;  // end of a stem sentence
+      raw.unshift(t); i--;
+    }
+    const optStart = i+1;
+    // style A: letter/symbol-prefixed choices, e.g. "©) ...", "A) ...", "(B) ..."
+    const PREF=/^\s*\(?[©A-Za-z#@]\s*\)\s+\S/;
+    const pref = raw.filter(l=>PREF.test(l));
+    let opts;
+    if(pref.length>=2){
+      opts = pref.map(l=> l.replace(/^\s*\(?[©A-Za-z#@]\s*\)\s+/,"").trim()).filter(o=>!isGarbage(o) && o.length>1);
+    } else {
+      // style B: single-word vocab choices (TC/SE)
+      opts = raw.filter(l=>isCandidate(l) && !/\s/.test(l)).filter(o=>!isGarbage(o));
+      const exp={se:6,tc1:5,single:5,multi:5}[d.type]||0;
+      if(exp && opts.length>exp){
+        const drop=[...opts].sort((a,b)=>(STOPWORDS.has(a.toLowerCase())?-1:0)-(STOPWORDS.has(b.toLowerCase())?-1:0)||a.length-b.length);
+        while(opts.length>exp){ const w=drop.shift(); const ix=opts.indexOf(w); if(ix>=0) opts.splice(ix,1); else break; }
+      }
+    }
+    const stem=stripDir(L.slice(0,optStart)).join(" ").replace(/\s+/g," ").trim();
+    return {type:d.type,sec:b.sec,num:b.num,blanks:d.blanks,multi:!!d.multi,stem,opts};
+  }
+
+  // dedupe by (sec,num), keep the block with the best (expected-matching) option count
+  const seen={};
+  for(const b of blocks){
+    const d=classify(b);
+    if(d.type==="tcm"){ const k=b.sec+":"+b.num; if(!seen[k]) seen[k]={__tcm:true,sec:b.sec,num:b.num}; continue; }
+    const ex=extract(b,d);
+    if(ex.opts.length<3 && d.type!=="numeric") continue;
+    const k=b.sec+":"+b.num;
+    const exp={se:6,tc1:5,single:5,multi:5}[d.type]||0;
+    const score=x=>(exp&&x.opts.length===exp?1000:0)+x.opts.length;
+    if(!seen[k]||score(ex)>score(seen[k])) seen[k]=ex;
+  }
+
+  // best-effort answer key: parse trailing "N.ANS" pairs, match a section range 1..M
+  const keyByRange={}; // "1..M" -> [{n,ans}]
+  let buf=[];
+  const keyRe=/(?:^|\s)(\d+)\.\s*([A-Fa-f]{1,6})/g; let km;
+  for(const raw of lines){
+    const t=raw.replace(/^#+\s*/,"").trim();
+    if(/^(WX|RF|W|R)\s*\d*\s*$/i.test(t)){ if(buf.length){ const arr=[]; let m2; const r=/(?:^|\s)(\d+)\.\s*([A-Fa-f]{1,6})/g; while((m2=r.exec(buf.join(" ")))) arr.push({n:+m2[1],ans:m2[2].toUpperCase()}); if(arr.length) keyByRange[arr[0].n+".."+arr[arr.length-1].n]=arr; buf=[]; } continue; }
+    if(/^\d+\.\s*[A-Fa-f]/.test(t)||/^\d+\.\s*[A-Fa-f]/.test(t)) buf.push(t); else if(buf.length && /^[A-Fa-f]{1,6}$/.test(t)) buf.push(t);
+  }
+
+  const questions=[];
+  Object.values(seen).forEach(ex=>{
+    if(ex.__tcm) return; // multi-blank TC: options can't be column-split from flattened text; skip for now
+    if(!ex.opts.length && ex.type!=="numeric") return;
+    const letterPool="ABCDEFGHIJKLMNOP";
+    const options=ex.opts.map((o,idx)=>({letter:letterPool[idx], text:o, blankIdx:0}));
+    let answers=[];
+    const range=keyByRange["1.."+ex.total];
+    if(range){ const hit=range.find(r=>r.n===ex.num); if(hit) answers=hit.ans.split("").filter(c=>letterPool.includes(c)); }
+    const sectionMap={tc1:"Text Completion",se:"Sentence Equivalence",single:"Single Choice",multi:"Multiple Choice",numeric:"Numeric Entry"};
+    questions.push({
+      id:uid(), num:ex.num, section:sectionMap[ex.type]||"Question",
+      blanks: ex.type==="tc1"?1:(ex.type==="se"?1:1),
+      multi: ex.multi,
+      text: ex.stem || "(题干缺失)",
+      options, answers, explanation:"",
+      source:"realgre"
+    });
+  });
+  const secNames={2:"Verbal",3:"Verbal",4:"Quant",5:"Quant"};
+  const t=title&&title.trim()?title:(secNames[Object.values(seen).find(x=>x.sec)?.sec]? secNames[Object.values(seen).find(x=>x.sec)?.sec]+" 真题":"GRE 真题");
+  return { title:t||"GRE 真题", source, questions };
 }
 
 /* ============================================================
@@ -218,6 +343,7 @@ function estScore(correct,total){
   return Math.max(130, Math.min(170, s));
 }
 function qCorrect(q, sel){
+  if(!q.answers || !q.answers.length) return null; // no answer key -> unknown
   if(q.kind==="numeric") return numEq(sel, q.answers[0]);
   if(q.multi){
     const a=[...q.answers].sort().join(), b=[...sel].sort().join();
@@ -486,11 +612,16 @@ function renderQCard(q, reviewMode){
     const rsel = q.kind==="numeric" ? (state.review.answers[q.id]||"")
                                     : (state.review.answers[q.id] || (q.multi?[]:[]));
     const correct = qCorrect(q, rsel);
-    const ansShown = q.kind==="numeric" ? String(q.answers[0]) : q.answers.join(q.multi?" / ":"，");
-    html+=`<div class="exp"><div class="verdict ${correct?"ok":"no"}">${correct?"✓ 答对":"✗ 答错"}</div>`;
-    html+=`<div class="et">正确答案</div><p>${esc(ansShown)}</p>`;
-    if(q.explanation){ html+=`<div class="et" style="margin-top:12px">解析</div><p>${esc(q.explanation)}</p>`; }
-    html+=`</div>`;
+    if(correct===null){
+      html+=`<div class="exp"><div class="verdict">— 未提供答案</div>`;
+      html+=`<div class="et">本题原始题库未附标准答案，无法判分。</div></div>`;
+    } else {
+      const ansShown = q.kind==="numeric" ? String(q.answers[0]) : q.answers.join(q.multi?" / ":"，");
+      html+=`<div class="exp"><div class="verdict ${correct?"ok":"no"}">${correct?"✓ 答对":"✗ 答错"}</div>`;
+      html+=`<div class="et">正确答案</div><p>${esc(ansShown)}</p>`;
+      if(q.explanation){ html+=`<div class="et" style="margin-top:12px">解析</div><p>${esc(q.explanation)}</p>`; }
+      html+=`</div>`;
+    }
   }
   html+=`</div>`;
   card.innerHTML=html;
@@ -558,17 +689,19 @@ function renderNav(){
 function submitTest(){
   const t=state.test;
   const total=t.questions.length;
-  const answers={}; let correct=0;
+  const answers={}; let correct=0, unknown=0;
   t.questions.forEach(q=>{
     let sel;
     if(q.kind==="numeric") sel = state.sel[q.id]||"";
     else if(q.multi) sel = getSel(q.id);
     else sel = state.sel[q.id]||[];
     answers[q.id]= sel;
+    if(!q.answers || !q.answers.length){ unknown++; return; } // no answer key -> can't score
     if(qCorrect(q, sel)) correct++;
   });
-  const pct = total? Math.round(correct/total*100) : 0;
-  const rec={ id:uid(), testId:t.id, date:Date.now(), score:{correct,total,pct}, answers };
+  const scored = total - unknown;
+  const pct = scored? Math.round(correct/scored*100) : 0;
+  const rec={ id:uid(), testId:t.id, date:Date.now(), score:{correct,total,pct,unknown}, answers };
   const res=loadRes(); res.push(rec); saveRes(res);
   stopTimer();
   state.review=rec;
@@ -577,13 +710,14 @@ function submitTest(){
 
 function renderResults(){
   const t=state.test, rec=state.review;
-  const {correct,total,pct}=rec.score;
-  const wrong=total-correct;
-  const est = estScore(correct,total);
+  const {correct,total,pct,unknown=0}=rec.score;
+  const wrong=total-correct-unknown;
+  const est = estScore(correct,total-unknown);
   const typeLabel = t.type==="quant" ? "数学 Quant" : "语文 Verbal";
   const R=56, C=2*Math.PI*R;
   const off=C*(1-pct/100);
   const app=$("#app");
+  let unknownNote = unknown? `<div class="stat"><b>${unknown}</b><span>无答案未判</span></div>` : "";
   let html=`<div class="page-fade">
     <div class="result-hero">
       <div class="ring">
@@ -592,7 +726,7 @@ function renderResults(){
           <circle class="ring-prog" cx="86" cy="86" r="${R}" fill="none" stroke="var(--accent)" stroke-width="13"
             stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C}"/>
         </svg>
-        <div class="num"><b>${pct}%</b><span>${correct}/${total} 正确</span></div>
+        <div class="num"><b>${pct}%</b><span>${correct}/${total-unknown} 正确</span></div>
       </div>
       <h1 style="font-size:24px;letter-spacing:-.02em;margin:0">${esc(t.title)}</h1>
       <div class="muted" style="margin-top:6px">科目 <b>${typeLabel}</b> ｜ 完成于 ${new Date(rec.date).toLocaleString()}</div>
@@ -600,10 +734,11 @@ function renderResults(){
     <div class="stat-row">
       <div class="stat ok"><b>${correct}</b><span>答对</span></div>
       <div class="stat no"><b>${wrong}</b><span>答错</span></div>
-      <div class="stat"><b>${correct}/${total}</b><span>原始分</span></div>
+      <div class="stat"><b>${correct}/${total-unknown}</b><span>已判分</span></div>
+      ${unknownNote}
       <div class="stat"><b>≈ ${est}<span style="font-size:13px;color:var(--ink-faint)">/170</span></b><span>预估 GRE 分数</span></div>
     </div>
-    <p class="muted" style="text-align:center;margin:2px 0 18px;font-size:12.5px">预估为粗略换算（130 + 正确率 × 40，按单科估算；真实 GRE 采用自适应等值，仅供参考）。</p>
+    ${unknown?`<p class="muted" style="text-align:center;margin:2px 0 18px;font-size:12.5px">有 ${unknown} 题未附标准答案（原始题库未提供），暂不参与计分。</p>`:`<p class="muted" style="text-align:center;margin:2px 0 18px;font-size:12.5px">预估为粗略换算（130 + 正确率 × 40，按单科估算；真实 GRE 采用自适应等值，仅供参考）。</p>`}
     <div class="res-list" id="resList"></div>
     <div class="player-foot" style="margin-top:24px">
       <button class="btn" id="backCover">← 返回试卷列表</button>
