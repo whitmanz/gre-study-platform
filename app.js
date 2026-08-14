@@ -165,13 +165,22 @@ function parseDocument(rawText, title, source){
    ============================================================ */
 const state = { view:"cover", test:null, idx:0, sel:{}, review:null, reviewIdx:0, start:0, timer:null };
 
+function isSentenceEquivalence(q){
+  return /sentence\s*equivalence|六选二|se\b/i.test(q.section||"");
+}
 function setSel(qid, blankIdx, letter){
   const q = state.test.questions.find(x=>x.id===qid);
   if(q.multi){
     if(!Array.isArray(state.sel[qid])) state.sel[qid]=[];
     const arr=state.sel[qid];
     const i=arr.indexOf(letter);
-    if(i>=0) arr.splice(i,1); else if(arr.length<2) arr.push(letter);
+    if(i>=0){
+      arr.splice(i,1);
+    } else {
+      // SE (6 choose 2) caps at 2; generic "select all that apply" has no cap
+      const maxSel = isSentenceEquivalence(q) ? 2 : 999;
+      if(arr.length < maxSel) arr.push(letter);
+    }
   } else {
     if(!Array.isArray(state.sel[qid])) state.sel[qid]=new Array(q.blanks).fill(null);
     state.sel[qid][blankIdx]= (state.sel[qid][blankIdx]===letter)? null : letter;
@@ -324,8 +333,14 @@ function getTestById(id){
   if(BUILTIN[id]) return BUILTIN[id];
   return loadTests().find(t=>t.id===id);
 }
+function normalizeTest(t){
+  if(!t) return t;
+  // built-in questions may not have ids; assign stable ones so state.sel keys are unique
+  (t.questions||[]).forEach((q,i)=>{ if(!q.id) q.id = "q_"+i+"_"+uid(); });
+  return t;
+}
 function startTest(id){
-  const t=getTestById(id);
+  const t=normalizeTest(getTestById(id));
   if(!t){ toast("试卷不存在"); return; }
   state.test=t; state.sel={}; state.idx=0; state.review=null; state.start=Date.now();
   startTimer();
@@ -334,7 +349,7 @@ function startTest(id){
 function reviewTest(id){
   const res=loadRes().filter(r=>r.testId===id).sort((a,b)=>b.date-a.date);
   if(!res.length){ toast("还没有成绩"); return; }
-  state.test=getTestById(id);
+  state.test=normalizeTest(getTestById(id));
   state.review=res[0];
   state.sel={}; // not used in review
   state.reviewIdx=0;
@@ -498,8 +513,9 @@ function optHtml(q,o,reviewMode){
       : ((state.sel[q.id]||[])[o.blankIdx]===o.letter);
     if(isSel) cls+=" sel";
   }
+  const check = (q.multi || cls.includes("sel")) ? `<span class="check"></span>` : "";
   return `<button class="${cls}" data-letter="${o.letter}" data-bi="${o.blankIdx}">
-      <span class="ltr">${esc(o.letter)}</span><span>${esc(o.text)}</span></button>`;
+      <span class="ltr">${esc(o.letter)}</span><span>${esc(o.text)}</span>${check}</button>`;
 }
 function renderNav(){
   const grid=$("#navgrid"); if(!grid) return;
