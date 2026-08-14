@@ -333,7 +333,60 @@ a{color:var(--accent-ink);text-decoration:none;}
   .wrap{padding:22px 16px 70px;}
   .qcard{padding:20px 18px;}
   .opt{font-size:14px;}
+  .hist-stats{grid-template-columns:repeat(2,1fr);}
+  .hist-actions{flex-direction:column;}
 }
+
+/* ---------- history / results log ---------- */
+.history-list{display:flex;flex-direction:column;gap:18px;}
+.hist-card{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow-1);overflow:hidden;
+  transition:transform 200ms var(--ease-out), box-shadow 260ms var(--ease-out), border-color 200ms ease;
+}
+.hist-card:active{transform:scale(.995);}
+@media (hover:hover) and (pointer:fine){
+  .hist-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-2);}
+}
+.hist-main{padding:22px;}
+.hist-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:14px;}
+.hist-title{font-weight:680;font-size:17.5px;letter-spacing:-.01em;line-height:1.35;}
+.hist-title .badge{margin-left:10px;}
+.hist-date{font-size:12.5px;color:var(--ink-faint);white-space:nowrap;}
+.hist-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px;}
+.hstat{
+  background:var(--surface-2);border:1px solid var(--line);border-radius:13px;
+  padding:12px;text-align:center;
+}
+.hstat b{display:block;font-size:20px;font-weight:720;letter-spacing:-.02em;color:var(--ink);line-height:1.1;}
+.hstat b .small{font-size:13px;color:var(--ink-faint);font-weight:600;}
+.hstat span{display:block;margin-top:6px;font-size:12px;color:var(--ink-faint);}
+.hstat.est b{color:var(--accent-ink);}
+
+.wrong-list{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface-2);}
+.wrong-list.empty{background:var(--good-soft);border-color:var(--good-soft);}
+.wl-head{
+  background:var(--bad-soft);color:var(--bad);font-size:12.5px;font-weight:680;
+  padding:9px 14px;
+}
+.wrong-list.empty .wl-head{background:#d1f5e5;color:var(--good);}
+.wl-item{padding:11px 14px;border-top:1px solid var(--line);font-size:13.5px;}
+.wl-item:first-of-type{border-top:none;}
+.wl-q{font-weight:600;margin-bottom:4px;}
+.wl-ans{display:flex;gap:14px;flex-wrap:wrap;}
+.wl-wrong{color:var(--bad);font-weight:600;}
+.wl-right{color:var(--good);font-weight:600;}
+.hist-actions{
+  display:flex;gap:10px;padding:14px 22px;background:var(--surface-2);border-top:1px solid var(--line);
+}
+.hist-actions .btn{flex:1;justify-content:center;}
+
+/* ---------- delete confirmation modal ---------- */
+.confirm-modal{text-align:center;padding:30px 26px;}
+.confirm-icon{font-size:38px;line-height:1;margin-bottom:12px;}
+.confirm-modal h3{margin:0 0 8px;font-size:20px;letter-spacing:-.02em;}
+.confirm-modal .sub{margin:0 0 22px;color:var(--ink-soft);font-size:14px;line-height:1.6;}
+.confirm-modal .foot{justify-content:center;margin-top:0;}
 
 /* ---------- reduced motion: fewer & gentler, never zero ---------- */
 @media (prefers-reduced-motion: reduce){

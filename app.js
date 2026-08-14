@@ -317,13 +317,31 @@ function renderCover(){
 
 function deleteTest(id){
   if(isBuiltin(id)){ toast("内置试卷不能删除"); return; }
-  if(!confirm("确定删除这份试卷及其成绩记录？")) return;
-  let tests=loadTests().filter(t=>t.id!==id);
-  saveTests(tests);
-  let res=loadRes().filter(r=>r.testId!==id);
-  saveRes(res);
-  toast("已删除");
-  renderCover();
+  const t=getTestById(id);
+  showDeleteConfirm(t?.title||"此试卷", ()=>{
+    let tests=loadTests().filter(x=>x.id!==id);
+    saveTests(tests);
+    let res=loadRes().filter(r=>r.testId!==id);
+    saveRes(res);
+    toast("已删除");
+    if(state.view==="cover") renderCover();
+    else if(state.view==="history") renderHistory();
+  });
+}
+
+function showDeleteConfirm(title, onConfirm){
+  const ov=document.createElement("div"); ov.className="overlay confirm-overlay"; ov.style.display="flex";
+  ov.innerHTML=`<div class="modal confirm-modal"><div class="confirm-icon">🗑</div>
+    <h3>删除试卷</h3>
+    <p class="sub">确定删除「<b>${esc(title)}</b>」？<br>该试卷及所有相关成绩记录都会被永久删除，无法恢复。</p>
+    <div class="foot">
+      <button class="btn" id="cdCancel">取消</button>
+      <button class="btn primary" id="cdConfirm" style="background:var(--bad);border-color:var(--bad);box-shadow:0 4px 14px rgba(226,64,59,.28)">删除</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+  ov.onclick=(e)=>{ if(e.target===ov) ov.remove(); };
+  $("#cdCancel",ov).onclick=()=>ov.remove();
+  $("#cdConfirm",ov).onclick=()=>{ ov.remove(); onConfirm(); };
 }
 
 /* ============================================================
@@ -624,6 +642,87 @@ function renderResults(){
 }
 
 /* ============================================================
+   HISTORY — log of all completed papers
+   ============================================================ */
+function renderHistory(){
+  const res=loadRes().slice().sort((a,b)=>b.date-a.date);
+  const app=$("#app");
+  if(!res.length){
+    app.innerHTML=`<div class="page-fade"><div class="hero"><h1>历史记录</h1><p>你还没有完成过任何试卷。去「我的试卷」开始练习吧。</p></div>
+      <div class="player-foot"><button class="btn primary" id="hhBack">← 返回试卷列表</button></div></div>`;
+    $("#hhBack").onclick=()=>go("cover");
+    return;
+  }
+  const testsMap={}; builtinList().forEach(t=>testsMap[t.id]=t); loadTests().forEach(t=>testsMap[t.id]=t);
+
+  let html=`<div class="page-fade"><div class="hero"><h1>历史记录</h1><p>你完成过的所有试卷、得分和错题概览。点击卡片可逐题回顾解析。</p></div>
+    <div class="history-list">`;
+
+  res.forEach(rec=>{
+    const t=testsMap[rec.testId]||{title:"已删除试卷", type:"verbal", questions:[]};
+    const {correct,total,pct}=rec.score;
+    const wrong=total-correct;
+    const est=estScore(correct,total);
+    const typeLabel=t.type==="quant"?"Q 数学":"V 语文";
+    const wrongQs=t.questions.map((q,i)=>{
+      const sel=rec.answers[q.id];
+      return {q, ok:qCorrect(q, sel)};
+    }).filter(x=>!x.ok);
+
+    let wrongHtml="";
+    if(wrongQs.length){
+      wrongHtml=`<div class="wrong-list"><div class="wl-head">错题 ${wrong} 道</div>`;
+      wrongQs.forEach(({q})=>{
+        const sel=rec.answers[q.id];
+        const shown=q.kind==="numeric"?(String(sel==null?"":sel).trim()||"—")
+                    :(q.multi?(sel||[]).join(" / "):((sel||[]).filter(Boolean).join("")||"—"));
+        const ansShown=q.kind==="numeric"?String(q.answers[0]):q.answers.join(q.multi?" / ":"，");
+        wrongHtml+=`<div class="wl-item"><div class="wl-q">Q${q.num}${q.section?` · ${esc(q.section)}`:``}</div>
+          <div class="wl-ans"><span class="wl-wrong">你的：${esc(shown)}</span><span class="wl-right">正确：${esc(ansShown)}</span></div></div>`;
+      });
+      wrongHtml+=`</div>`;
+    } else {
+      wrongHtml=`<div class="wrong-list empty"><div class="wl-head">全对 🎉</div><div class="wl-item">本次练习没有错题。</div></div>`;
+    }
+
+    html+=`<div class="hist-card" data-rec="${rec.id}">
+      <div class="hist-main">
+        <div class="hist-top">
+          <div class="hist-title">${esc(t.title)}<span class="badge ${t.type==="quant"?"type-q":"type-v"}">${typeLabel}</span></div>
+          <div class="hist-date">${new Date(rec.date).toLocaleString()}</div>
+        </div>
+        <div class="hist-stats">
+          <div class="hstat"><b>${pct}%</b><span>正确率</span></div>
+          <div class="hstat"><b>${correct}/${total}</b><span>正确数</span></div>
+          <div class="hstat"><b>${wrong}</b><span>错题</span></div>
+          <div class="hstat est"><b>≈ ${est}<span class="small">/170</span></b><span>预估 GRE</span></div>
+        </div>
+        ${wrongHtml}
+      </div>
+      <div class="hist-actions">
+        <button class="btn" data-reviewid="${rec.id}">查看解析</button>
+        ${!isBuiltin(rec.testId)?`<button class="btn" data-delid="${rec.testId}">删除试卷</button>`:""}
+      </div>
+    </div>`;
+  });
+  html+=`</div><div class="player-foot" style="margin-top:24px"><button class="btn primary" id="hhBack">← 返回试卷列表</button></div></div>`;
+  app.innerHTML=html;
+
+  $("#hhBack").onclick=()=>go("cover");
+  $$("[data-reviewid]").forEach(b=>b.onclick=(e)=>{ e.stopPropagation(); openHistoryReview(b.getAttribute("data-reviewid")); });
+  $$("[data-delid]").forEach(b=>b.onclick=(e)=>{ e.stopPropagation(); deleteTest(b.getAttribute("data-delid")); });
+}
+
+function openHistoryReview(recId){
+  const rec=loadRes().find(r=>r.id===recId); if(!rec) return;
+  state.test=normalizeTest(getTestById(rec.testId));
+  state.review=rec;
+  state.reviewIdx=0; state.idx=0;
+  stopTimer();
+  go("review");
+}
+
+/* ============================================================
    REVIEW (read-only player at a specific question)
    ============================================================ */
 function renderReview(){
@@ -670,6 +769,7 @@ function render(){
   else if(state.view==="player") renderPlayer();
   else if(state.view==="results") renderResults();
   else if(state.view==="review") renderReview();
+  else if(state.view==="history") renderHistory();
   window.scrollTo({top:0,behavior:"instant"in window?"instant":"auto"});
 }
 
@@ -741,6 +841,7 @@ function finalizeUpload(text, source, fileName){
 
 /* ---------- events ---------- */
 $("#newBtn").onclick=openUpload;
+$("#historyBtn").onclick=()=>go("history");
 $("#helpBtn").onclick=showHelp;
 $("#upCancel").onclick=closeUpload;
 $("#drop").onclick=()=> $("#fileInput").click();
