@@ -1,6 +1,6 @@
 # GRE 刷题平台 · GRE Practice Platform
 
-**Repo:** https://github.com/whitmanz/gre-study-platform
+**Live:** https://whitmanz.github.io/gre-study-platform/
 
 A clean, GRE-style practice platform for **Verbal (语文)** and **Quant (数学)** questions.
 Upload your own papers (PDF / Markdown / TXT) or jump straight into the built-in real-exam samples,
