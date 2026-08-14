@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRE 刷题平台</title>
+<link rel="stylesheet" href="styles.css">
+<!-- pdf.js (CDN) for text extraction from uploaded PDFs -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> GRE 刷题平台</div>
+    <div class="spacer"></div>
+    <button class="btn ghost sm" id="helpBtn">格式说明</button>
+    <button class="btn primary sm" id="newBtn">+ 上传试卷</button>
+  </div>
+  <div id="app" class="wrap"></div>
+
+  <!-- upload modal -->
+  <div id="uploadOverlay" class="overlay" style="display:none">
+    <div class="modal">
+      <h3>上传练习试卷</h3>
+      <p class="sub">支持 <b>Markdown / TXT</b>，以及可提取文字的 <b>PDF</b>。语文（填空 / 句等价）与数学（大小比较 / 选择 / 数值输入）都支持。你手里的 9月真题 PDF 是扫描截图，无法直接解析，建议直接做内置示例，或把题目按 Markdown 格式粘贴到下方。</p>
+      <div class="field">
+        <label>试卷标题</label>
+        <input class="input" id="upTitle" placeholder="例如：GRE10月真题 第1套 / 填空专项练习">
+      </div>
+      <div class="field">
+        <label>科目</label>
+        <select class="input" id="upType">
+          <option value="verbal">语文 Verbal（填空 / 句等价）</option>
+          <option value="quant">数学 Quant（大小比较 / 选择 / 数值输入）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>选择文件（PDF / MD / TXT）</label>
+        <div class="drop" id="drop">
+          <div class="ic">📄</div>
+          <div>拖拽文件到此处，或 <b>点击选择</b></div>
+          <div class="muted" style="margin-top:6px">也可直接粘贴 Markdown 文本到下方</div>
+        </div>
+        <input type="file" id="fileInput" accept=".pdf,.md,.markdown,.txt" style="display:none">
+      </div>
+      <div class="field">
+        <label>或粘贴 Markdown 文本</label>
+        <textarea class="textarea" id="mdText" placeholder="在此粘贴按格式编写的试题文本…"></textarea>
+      </div>
+      <div class="loading" id="parseStatus" style="display:none"><span class="spin"></span><span id="parseMsg">解析中…</span></div>
+      <div class="format-help">
+        <b>推荐格式（一行一题，选项 A–I，答案写在 <code>&gt; answer:</code>）</b>
+<pre>1. Scientists argued the compound was ____ interesting.
+   A. limited
+   B. dubious
+   C. intrinsic
+   > answer: C
+   > explanation: intrinsic = 固有的，与后文 important 同向。
+
+2. Although safe, the drug remains (i)____ and (ii)____ unsettling.
+   A. sound   D. retroactively
+   B. risky   E. innocuously
+   C. odd     F. intrinsically
+   > answer: A, F
+   > explanation: Although 转折……</pre>
+        <span class="muted">双/三空：选项按 A–C、D–F、G–I 分组自动对应各空；六选二（SE）只需在答案写两个字母。</span>
+      </div>
+      <div class="foot">
+        <button class="btn" id="upCancel">取消</button>
+        <button class="btn primary" id="upConfirm">解析并保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="samples.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
