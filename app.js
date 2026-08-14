@@ -700,7 +700,7 @@ function renderHistory(){
         ${wrongHtml}
       </div>
       <div class="hist-actions">
-        <button class="btn" data-reviewid="${rec.id}">查看解析</button>
+        ${testsMap[rec.testId]?`<button class="btn" data-reviewid="${rec.id}">查看解析</button>`:""}
         ${!isBuiltin(rec.testId)?`<button class="btn" data-delid="${rec.testId}">删除试卷</button>`:""}
       </div>
     </div>`;
@@ -715,7 +715,8 @@ function renderHistory(){
 
 function openHistoryReview(recId){
   const rec=loadRes().find(r=>r.id===recId); if(!rec) return;
-  state.test=normalizeTest(getTestById(rec.testId));
+  const t=getTestById(rec.testId); if(!t){ toast("原试卷已被删除，无法查看解析"); return; }
+  state.test=normalizeTest(t);
   state.review=rec;
   state.reviewIdx=0; state.idx=0;
   stopTimer();
